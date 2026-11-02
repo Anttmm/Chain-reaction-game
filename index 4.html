@@ -1,0 +1,84 @@
+<!doctype html><html lang="en"><meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no"><meta charset="utf-8"><title>Chain Reaction 4.5</title>
+<style>body{background:#080e20;color:white;font-family:system-ui;margin:0;padding:12px;max-width:600px;margin:auto}header{display:flex;justify-content:space-between;gap:8px;font-weight:700}small{color:#aabbd7}canvas{width:100%;background:#101a32;border-radius:14px;touch-action:none;display:block}button{border:0;border-radius:12px;padding:12px 18px;font-weight:700;background:#7dd3fc;color:#061224}#panel{display:flex;gap:8px;align-items:center;justify-content:space-between;margin:12px 0}#info{color:#b9c7e0;font-size:13px;line-height:1.5}#banner{font-weight:700;color:#fde68a;margin:8px 0;min-height:22px}#buttons{display:flex;gap:8px;flex-wrap:wrap}</style>
+<header><span id="level">Level 1</span><span id="score">0 / 20</span><span id="time">60s</span></header><div id="banner">Launch your orb!</div><div id="combo" style="height:24px;text-align:center;font-weight:800;color:#fde047"></div><canvas id="game" width="360" height="450"></canvas><div id="panel"><span id="pulses">Shots: 12</span><div id="buttons"><button id="restart">Restart</button><button id="next" hidden>Next level</button></div></div><div id="info">Drag BACK from the glowing orb at the bottom to launch. During play, touch ANYWHERE, drag in the direction you want the orb to fly, and release. Your shot is the ORB itself now — there is no invisible beam. The big pulse happens only when the orb physically hits a ball. The white orb is heavy now, so it pushes through hits instead of bouncing backward. Balls directly in front of the struck ball are protected from the impact pulse, so the rear ball can actually catch them and merge. Impact pulses have a longer range, the board keeps more balls available for chains, and bigger balls are only slightly heavier. Pink → orange → blue → yellow → green → purple → red. Matching colors merge whenever they touch. Tap once to enable sound on iPhone.</div>
+<script>
+(()=>{'use strict';
+const c=document.querySelector('#game'),g=c.getContext('2d'),$=id=>document.getElementById(id),W=360,H=450;
+const colors=['#fb7185','#fb923c','#38bdf8','#fde047','#4ade80','#c084fc','#f87171'],points=[1,3,8,20,50,120];
+let level=1,score=0,target=20,time=60,shots=12,orb,balls=[],fx=[],mode='launch',drag=null,aimLeft=5,last=0,spawn=0,actx=null,won=false,combo=0,comboTimer=0,bestCombo=0;
+function rand(a,b){return a+Math.random()*(b-a)}
+function tone(tier){try{actx??=new(window.AudioContext||window.webkitAudioContext)();actx.resume();let now=actx.currentTime;[0,7].forEach((semi,k)=>{let o=actx.createOscillator(),v=actx.createGain();o.type=k?'triangle':'sine';let f=(330+tier*90)*Math.pow(2,semi/12);o.frequency.setValueAtTime(f,now);o.frequency.exponentialRampToValueAtTime(f*1.45,now+.12);v.gain.setValueAtTime(k?.08:.16,now);v.gain.exponentialRampToValueAtTime(.001,now+.24);o.connect(v).connect(actx.destination);o.start(now);o.stop(now+.25)});}catch(e){}}
+function radius(t){return 9+t*3.5}
+function add(t=0){for(let k=0;k<30;k++){let x=rand(25,W-25),y=rand(30,H-90);if(balls.every(b=>Math.hypot(b.x-x,b.y-y)>b.r+radius(t)+9)){let s=30/(1+t*.08);balls.push({x,y,vx:rand(-s,s),vy:rand(-s,s),tier:t,r:radius(t),charged:0,pulseCd:0,rot:rand(0,Math.PI*2)});return}}}
+function init(){score=0;target=20+Math.round((level-1)*5+(level-1)**1.15*2);time=60;shots=12+Math.floor(level/12);orb={x:180,y:403,vx:0,vy:0,hitCd:0,trail:[]};balls=[];fx=[];mode='launch';drag=null;spawn=0;won=false;combo=0;comboTimer=0;bestCombo=0;let desired=24+Math.min(6,Math.floor((level-1)/10));for(let i=0;i<desired;i++)add(i%9===0?1:0);$('next').hidden=true;update()}
+function update(){$('level').textContent='Level '+level;$('score').textContent=score+' / '+target;$('time').textContent=Math.ceil(Math.max(0,time))+'s';$('pulses').textContent='Shots: '+shots;$('banner').textContent=won?'Level cleared!':mode==='launch'?'Pull back from the orb to launch':mode==='aim'?'Aim: '+aimLeft.toFixed(1)+'s left':mode==='play'?'Aim and relaunch the orb':mode==='lost'?'Time up! Restart to try again':''}
+function launchOrb(dx,dy){if(shots<=0)return;let d=Math.hypot(dx,dy);if(d<5)return;shots--;let nx=dx/d,ny=dy/d;let speed=Math.max(230,Math.min(430,230+d*1.35));orb.vx=nx*speed;orb.vy=ny*speed;orb.hitCd=.06;fx.push({x:orb.x,y:orb.y,t:.18,kind:'launch',r:4,color:'#7dd3fc'});update()}
+function impactSound(power=1){try{actx??=new(window.AudioContext||window.webkitAudioContext)();actx.resume();let o=actx.createOscillator(),v=actx.createGain(),now=actx.currentTime;o.type='triangle';o.frequency.setValueAtTime(150+power*45,now);o.frequency.exponentialRampToValueAtTime(90+power*25,now+.08);v.gain.setValueAtTime(.035+Math.min(.055,power*.008),now);v.gain.exponentialRampToValueAtTime(.001,now+.1);o.connect(v).connect(actx.destination);o.start(now);o.stop(now+.11)}catch(e){}}
+function impactPulse(x,y,power=1,color='#a5f3fc',skip=null,dirX=null,dirY=null,protectLane=false){
+let radius=112+power*18,force=155+power*38;
+fx.push({x,y,t:.42,kind:'impact',r:4,color,maxR:radius});
+for(let b of balls){
+if(b===skip)continue;
+let dx=b.x-x,dy=b.y-y,d=Math.max(1,Math.hypot(dx,dy));
+if(d<radius){
+let fall=.25+.75*(1-d/radius),weight=1/(1+b.tier*.08),laneScale=1;
+/* Keep the lane directly in front of the struck ball mostly still.
+   This lets the pushed ball catch the ball ahead instead of both accelerating together. */
+if(protectLane&&dirX!==null&&dirY!==null){
+let forward=dx*dirX+dy*dirY;
+let side=Math.abs(dx*dirY-dy*dirX);
+let laneWidth=28+b.r;
+if(forward>0&&side<laneWidth)laneScale=.04;
+}
+b.vx+=dx/d*force*fall*weight*laneScale;
+b.vy+=dy/d*force*fall*weight*laneScale;
+b.charged=Math.max(b.charged,.8);
+}}
+impactSound(power)
+}
+function tick(dt){if(mode!=='play'&&mode!=='aim')return;let scale=mode==='aim'?.18:1,step=dt*scale;time-=step;if(mode==='aim'){aimLeft-=dt;if(aimLeft<=0){let dx,dy;if(drag&&aimStart){dx=drag.x-aimStart.x;dy=drag.y-aimStart.y}else{dx=orb.vx;dy=orb.vy}if(Math.hypot(dx,dy)<10&&drag){dx=drag.x-orb.x;dy=drag.y-orb.y}launchOrb(dx,dy);mode='play';drag=null;aimStart=null}}orb.x+=orb.vx*step;orb.y+=orb.vy*step;if(Math.hypot(orb.vx,orb.vy)>80){orb.trail.push({x:orb.x,y:orb.y,t:.24});if(orb.trail.length>14)orb.trail.shift()}for(let q of orb.trail)q.t-=step;orb.trail=orb.trail.filter(q=>q.t>0);if(orb.x<11||orb.x>W-11){orb.vx*=-1;orb.x=Math.max(11,Math.min(W-11,orb.x))}if(orb.y<11||orb.y>H-11){orb.vy*=-1;orb.y=Math.max(11,Math.min(H-11,orb.y))}
+spawn+=step;let desired=24+Math.min(6,Math.floor((level-1)/10));if(balls.length<desired&&spawn>.48){spawn=0;add(0)}else if(balls.length<desired+3&&spawn>2.8){spawn=0;add(0)}
+orb.hitCd=Math.max(0,(orb.hitCd||0)-step);for(let b of balls){b.x+=b.vx*step;b.y+=b.vy*step;b.charged=Math.max(0,b.charged-step);b.pulseCd=Math.max(0,(b.pulseCd||0)-step);b.rot=(b.rot||0)+step*(.35+b.tier*.04);b.vx*=Math.pow(.997,step*60);b.vy*=Math.pow(.997,step*60);if(b.x<b.r||b.x>W-b.r){b.vx*=-1;b.x=Math.max(b.r,Math.min(W-b.r,b.x))}if(b.y<b.r||b.y>H-b.r){b.vy*=-1;b.y=Math.max(b.r,Math.min(H-b.r,b.y))}}
+for(let b of balls){let dx=b.x-orb.x,dy=b.y-orb.y,d=Math.hypot(dx,dy),min=b.r+11;if(d<min&&orb.hitCd<=0){let nx=dx/(d||1),ny=dy/(d||1),overlap=min-d;
+orb.x-=nx*Math.min(overlap*.18,1.4);orb.y-=ny*Math.min(overlap*.18,1.4);
+let speedBefore=Math.hypot(orb.vx,orb.vy);
+let p=Math.max(1.6,Math.min(6.5,speedBefore/55));
+impactPulse(b.x,b.y,p,'#7dd3fc',null,nx,ny,true);
+let shove=(190+p*34)/(1+b.tier*.06);
+b.vx+=nx*shove;b.vy+=ny*shove;
+/* heavy-orb behavior: it loses only a little speed and keeps traveling forward */
+let keep=Math.max(.84,1-b.tier*.012);
+orb.vx*=keep;orb.vy*=keep;
+/* tiny deflection rather than a rebound */
+let tangentX=-ny,tangentY=nx;
+let sideways=(b.vx*tangentX+b.vy*tangentY)*.025;
+orb.vx+=tangentX*sideways;orb.vy+=tangentY*sideways;
+b.pulseCd=.18;orb.hitCd=.09}}
+let removed=new Set,created=[];for(let i=0;i<balls.length;i++){if(removed.has(i))continue;for(let j=i+1;j<balls.length;j++){if(removed.has(j))continue;let a=balls[i],b=balls[j],dx=b.x-a.x,dy=b.y-a.y,d=Math.hypot(dx,dy),min=a.r+b.r;if(d>=min)continue;let nx=dx/(d||1),ny=dy/(d||1),rel=Math.hypot(a.vx-b.vx,a.vy-b.vy);if(a.tier===b.tier&&a.tier<6){removed.add(i);removed.add(j);let tier=a.tier+1,mx=(a.x+b.x)/2,my=(a.y+b.y)/2;score+=points[tier-1];combo=comboTimer>0?combo+1:1;comboTimer=1.55;bestCombo=Math.max(bestCombo,combo);created.push({x:mx,y:my,vx:(a.vx+b.vx)*.58+rand(-10,10),vy:(a.vy+b.vy)*.58+rand(-10,10),tier,r:radius(tier),charged:.6,pulseCd:.22,rot:rand(0,Math.PI*2)});fx.push({x:mx,y:my,t:.5,kind:'burst',r:0,color:colors[tier]});impactPulse(mx,my,1.5+tier*.52,colors[tier],a);tone(tier);break}else{if(rel>12&&(a.pulseCd||0)<=0&&(b.pulseCd||0)<=0){let mx=(a.x+b.x)/2,my=(a.y+b.y)/2,p=Math.max(.7,Math.min(2.6,rel/70));impactPulse(mx,my,p,'#94a3b8');a.pulseCd=.22;b.pulseCd=.22}let overlap=(min-d)/2;a.x-=nx*overlap;b.x+=nx*overlap;a.y-=ny*overlap;b.y+=ny*overlap;let av=a.vx*nx+a.vy*ny,bv=b.vx*nx+b.vy*ny;a.vx+=(bv-av)*nx*.5;a.vy+=(bv-av)*ny*.5;b.vx+=(av-bv)*nx*.5;b.vy+=(av-bv)*ny*.5}}}
+balls=balls.filter((_,i)=>!removed.has(i)).concat(created);comboTimer=Math.max(0,comboTimer-step);if(comboTimer<=0)combo=0;$('combo').textContent=combo>=2?'🔥 '+combo+'x CHAIN!':'';
+for(let f of fx){f.t-=step;if(f.kind==='burst')f.r+=step*160;else if(f.kind==='impact')f.r+=step*((f.maxR||150)/.42)}fx=fx.filter(f=>f.t>0);
+if(score>=target){mode='won';won=true;$('next').hidden=false}else if(time<=0){mode='lost'}update()}
+function draw(){g.fillStyle='#101a32';g.fillRect(0,0,W,H);g.fillStyle='#24334e';for(let x=20;x<W;x+=40)for(let y=20;y<H;y+=40){g.beginPath();g.arc(x,y,1,0,7);g.fill()}
+for(let f of fx){g.globalAlpha=Math.min(1,f.t*2.8);if(f.kind==='launch'){g.strokeStyle=f.color;g.lineWidth=4;g.beginPath();g.arc(f.x,f.y,f.r+(1-f.t/.18)*28,0,7);g.stroke()}else{g.strokeStyle=f.color;g.lineWidth=f.kind==='impact'?4:5;g.beginPath();g.arc(f.x,f.y,f.r,0,7);g.stroke();if(f.kind==='impact'){g.globalAlpha*=.35;g.beginPath();g.arc(f.x,f.y,f.r*.64,0,7);g.stroke()}}g.globalAlpha=1}
+for(let b of balls){let col=colors[b.tier],grad=g.createRadialGradient(b.x-b.r*.35,b.y-b.r*.4,b.r*.12,b.x,b.y,b.r);grad.addColorStop(0,'#ffffff');grad.addColorStop(.18,col);grad.addColorStop(1,col);g.save();g.shadowBlur=12+b.tier*2;g.shadowColor=col;g.fillStyle=grad;g.beginPath();g.arc(b.x,b.y,b.r,0,7);g.fill();g.shadowBlur=0;g.globalAlpha=.42;g.strokeStyle='#ffffff';g.lineWidth=Math.max(1.2,b.r*.09);g.beginPath();g.arc(b.x,b.y,b.r*.72,0,7);g.stroke();g.globalAlpha=.32;g.translate(b.x,b.y);g.rotate(b.rot||0);g.strokeStyle='#152034';g.lineWidth=1.6;
+if(b.tier===0){g.beginPath();g.arc(0,0,b.r*.38,0,7);g.stroke()}
+else if(b.tier===1){g.beginPath();g.moveTo(-b.r*.48,0);g.lineTo(b.r*.48,0);g.moveTo(0,-b.r*.48);g.lineTo(0,b.r*.48);g.stroke()}
+else if(b.tier===2){for(let k=0;k<3;k++){let a=k*Math.PI*2/3;g.beginPath();g.arc(Math.cos(a)*b.r*.36,Math.sin(a)*b.r*.36,b.r*.13,0,7);g.stroke()}}
+else if(b.tier===3){for(let k=0;k<4;k++){let a=k*Math.PI/2;g.beginPath();g.moveTo(Math.cos(a)*b.r*.18,Math.sin(a)*b.r*.18);g.lineTo(Math.cos(a)*b.r*.58,Math.sin(a)*b.r*.58);g.stroke()}}
+else if(b.tier===4){g.beginPath();for(let k=0;k<6;k++){let a=-Math.PI/2+k*Math.PI/3,x=Math.cos(a)*b.r*.48,y=Math.sin(a)*b.r*.48;k?g.lineTo(x,y):g.moveTo(x,y)}g.closePath();g.stroke()}
+else if(b.tier===5){g.beginPath();for(let k=0;k<5;k++){let a=-Math.PI/2+k*Math.PI*4/5,x=Math.cos(a)*b.r*.5,y=Math.sin(a)*b.r*.5;k?g.lineTo(x,y):g.moveTo(x,y)}g.closePath();g.stroke()}
+else{g.beginPath();g.arc(0,0,b.r*.5,0,7);g.stroke();g.beginPath();g.arc(0,0,b.r*.25,0,7);g.stroke()}
+g.restore();g.fillStyle='#152034';g.globalAlpha=.78;g.beginPath();g.arc(b.x-b.r*.22,b.y-b.r*.12,Math.max(1.5,b.r*.09),0,7);g.arc(b.x+b.r*.22,b.y-b.r*.12,Math.max(1.5,b.r*.09),0,7);g.fill();g.globalAlpha=1}
+for(let q of orb.trail){g.globalAlpha=Math.max(0,q.t/.24)*.42;g.fillStyle='#7dd3fc';g.beginPath();g.arc(q.x,q.y,5+5*q.t/.24,0,7);g.fill()}g.globalAlpha=1;g.shadowBlur=22;g.shadowColor='#7dd3fc';g.fillStyle='#e0f2fe';g.beginPath();g.arc(orb.x,orb.y,12.5,0,7);g.fill();g.shadowBlur=0;
+if(drag){let dx,dy;if(mode==='launch'){dx=orb.x-drag.x;dy=orb.y-drag.y}else{dx=drag.x-(aimStart?.x??drag.x);dy=drag.y-(aimStart?.y??drag.y);if(Math.hypot(dx,dy)<10){dx=drag.x-orb.x;dy=drag.y-orb.y}}let len=Math.hypot(dx,dy);if(len>3){let scale=Math.min(180,len)/len;g.strokeStyle='#facc15';g.lineWidth=3;g.setLineDash([7,5]);g.beginPath();g.moveTo(orb.x,orb.y);g.lineTo(orb.x+dx*scale,orb.y+dy*scale);g.stroke();g.setLineDash([])}}
+if(mode==='aim'){g.strokeStyle='#facc15';g.lineWidth=4;g.beginPath();g.arc(orb.x,orb.y,19,-Math.PI/2,-Math.PI/2+Math.PI*2*aimLeft/(Math.max(2,5-Math.floor((level-1)/25)*.25)));g.stroke()}
+if(mode==='won'||mode==='lost'){g.fillStyle='#000a';g.fillRect(0,0,W,H);g.fillStyle='white';g.font='bold 28px system-ui';g.textAlign='center';g.fillText(mode==='won'?'LEVEL CLEARED!':'TIME UP!',180,210);g.font='17px system-ui';g.fillText(mode==='won'?'Tap Next level below':'Tap Restart to try again',180,244);g.textAlign='start'}}
+function pos(e){let r=c.getBoundingClientRect();return{x:(e.clientX-r.left)*W/r.width,y:(e.clientY-r.top)*H/r.height}}
+let aimStart=null;
+c.addEventListener('pointerdown',e=>{if(!['launch','play'].includes(mode))return;let p=pos(e);if(mode==='launch'&&Math.hypot(p.x-orb.x,p.y-orb.y)>65)return;if(mode==='play'&&shots<=0)return;try{actx??=new(window.AudioContext||window.webkitAudioContext)();actx.resume()}catch(_){}c.setPointerCapture(e.pointerId);drag=p;if(mode==='play'){aimStart=p;mode='aim';aimLeft=Math.max(2,5-Math.floor((level-1)/25)*.25)}update()});
+c.addEventListener('pointermove',e=>{if(drag)drag=pos(e)});
+c.addEventListener('pointerup',e=>{if(!drag)return;let p=pos(e);if(mode==='launch'){let dx=p.x-orb.x,dy=p.y-orb.y,len=Math.hypot(dx,dy);if(len>12){let speed=Math.max(95,Math.min(290,len*2.2));orb.vx=-dx/len*speed;orb.vy=-dy/len*speed;mode='play'}}else if(mode==='aim'){let dx=p.x-(aimStart?.x??p.x),dy=p.y-(aimStart?.y??p.y);if(Math.hypot(dx,dy)<10){dx=p.x-orb.x;dy=p.y-orb.y}launchOrb(dx,dy);mode='play'}drag=null;aimStart=null;update()});
+c.addEventListener('pointercancel',()=>{if(mode==='aim')mode='play';drag=null;aimStart=null;update()});
+$('restart').onclick=init;$('next').onclick=()=>{level++;init()};
+function loop(now){let dt=Math.min(.045,(now-(last||now))/1000);last=now;tick(dt);draw();requestAnimationFrame(loop)}init();requestAnimationFrame(loop);
+})();</script></html>
